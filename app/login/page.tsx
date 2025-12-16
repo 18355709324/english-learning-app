@@ -45,8 +45,10 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-white to-slate-100 px-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-lg border border-slate-100 p-8 space-y-6">
-        <div className="space-y-2 text-center">
-          <h1 className="text-2xl font-bold text-slate-900">欢迎来到句乐部</h1>
+        <div className="space-y-3 text-center">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <h1 className="text-3xl font-bold text-slate-900">LingoBlocks</h1>
+          </div>
           <p className="text-sm text-slate-600">
             {mode === "login" ? "使用邮箱密码登录" : "创建一个新账号开始学习"}
           </p>

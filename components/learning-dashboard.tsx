@@ -52,6 +52,7 @@ export default function LearningDashboard({
   const [weeklyStats, setWeeklyStats] = useState(getWeeklyStats())
   const { isCompleted } = useProgress()
   const [courseQuestionCounts, setCourseQuestionCounts] = useState<Record<string, number>>({})
+  const [supabaseCourses, setSupabaseCourses] = useState<Record<string, { title: string; description: string | null; icon_name: string | null }>>({})
 
   // 加载学习统计数据
   useEffect(() => {
@@ -69,22 +70,30 @@ export default function LearningDashboard({
     return () => clearInterval(interval)
   }, [])
 
-  // 从 Supabase 加载每个课程的实际题目数量
+  // 从 Supabase 加载课程信息和题目数量
   useEffect(() => {
-    const loadCourseQuestionCounts = async () => {
+    const loadCourseData = async () => {
       const allCourses = getAllCourses()
       const counts: Record<string, number> = {}
+      const coursesMap: Record<string, { title: string; description: string | null; icon_name: string | null }> = {}
 
       for (const course of allCourses) {
         try {
           // 查找对应的 Supabase 课程
           const { data: courseRow } = await supabase
             .from("courses")
-            .select("id")
+            .select("id, title, description, icon_name")
             .eq("app_course_id", course.id)
             .maybeSingle()
 
           if (courseRow) {
+            // 保存 Supabase 中的课程信息（标题、描述、图标）
+            coursesMap[course.id] = {
+              title: courseRow.title,
+              description: courseRow.description,
+              icon_name: courseRow.icon_name,
+            }
+
             // 统计该课程下的句子数量
             const { count } = await supabase
               .from("sentences")
@@ -102,16 +111,17 @@ export default function LearningDashboard({
             counts[course.id] = course.questionCount
           }
         } catch (error) {
-          console.error(`加载课程 ${course.id} 题目数量失败:`, error)
-          // 出错时使用本地题目数量
+          console.error(`加载课程 ${course.id} 数据失败:`, error)
+          // 出错时使用本地数据
           counts[course.id] = course.questionCount
         }
       }
 
       setCourseQuestionCounts(counts)
+      setSupabaseCourses(coursesMap)
     }
 
-    loadCourseQuestionCounts()
+    loadCourseData()
   }, [])
 
   const navItems = [
@@ -151,8 +161,12 @@ export default function LearningDashboard({
     // 找到有进度的课程
     const coursesWithProgress = allCourses.map(course => {
       const progress = getCourseProgress(course.id)
+      // 优先使用 Supabase 中的课程信息
+      const supabaseCourse = supabaseCourses[course.id]
       return {
         ...course,
+        title: supabaseCourse?.title || course.title,
+        description: supabaseCourse?.description || course.description,
         progress: progress ? progress.progress : course.progress,
         lastPracticed: progress?.lastPracticed || course.lastPracticed,
       }
@@ -518,7 +532,13 @@ export default function LearningDashboard({
       >
         {/* Sidebar Header */}
         <div className="h-16 flex items-center justify-between px-4 border-b border-gray-200">
-          {!sidebarCollapsed && <h1 className="text-xl font-bold text-teal-600">EnglishLearn</h1>}
+          {!sidebarCollapsed && (
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">📚✨</span>
+              <h1 className="text-xl font-bold text-teal-600">LingoBlocks</h1>
+            </div>
+          )}
+          {sidebarCollapsed && <span className="text-2xl">📚</span>}
           <Button
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
             size="icon"

@@ -21,13 +21,12 @@ interface SentencePracticeAppProps {
 }
 
 export default function SentencePracticeApp({ 
-  courseId = "daily-conversation", 
+  courseId = "daily-conversation",
   onBack,
   onComplete 
 }: SentencePracticeAppProps) {
   const router = useRouter()
   const course = getCourseById(courseId)
-
   const [remoteQuestions, setRemoteQuestions] = useState<Question[] | null>(null)
   const [loadingRemote, setLoadingRemote] = useState(false)
   const [remoteError, setRemoteError] = useState<string | null>(null)
@@ -117,10 +116,13 @@ export default function SentencePracticeApp({
           // 重置索引和状态，避免旧题目残留
           setCurrentQuestionIndex(0)
           setSelectedWords([])
-          setAvailableWords([])
           setKeyboardInput("")
           setIsChecked(false)
           setIsCorrect(false)
+          // 注意：availableWords 会在 useEffect 中根据 currentQuestion 自动设置
+        } else {
+          // 如果没有题目，清空单词库
+          setAvailableWords([])
         }
       } catch (error) {
         console.error("加载云端句子失败", error)
@@ -142,13 +144,19 @@ export default function SentencePracticeApp({
   }, [currentQuestionIndex])
 
   useEffect(() => {
-    if (currentQuestion && currentQuestion.words) {
-      setAvailableWords(shuffleArray([...currentQuestion.words]))
+    // 当题目变化时，重新初始化单词库
+    const question = questions[currentQuestionIndex]
+    if (question && question.words && Array.isArray(question.words) && question.words.length > 0) {
+      const shuffled = shuffleArray([...question.words])
+      setAvailableWords(shuffled)
       // 切换题目时重置朗读状态
       setIsPlaying(false)
       setIsPlayingSlow(false)
+    } else if (questions.length === 0 || !question) {
+      // 如果题目列表为空或当前题目不存在，清空单词库
+      setAvailableWords([])
     }
-  }, [currentQuestionIndex, questions.length]) // 题目集变化或索引变化时重新生成单词库
+  }, [questions, currentQuestionIndex]) // 题目变化或索引变化时重新生成单词库
 
   // 初始化课程进度（当题目列表变化时更新总题目数）
   useEffect(() => {
@@ -435,6 +443,7 @@ export default function SentencePracticeApp({
     return `${mins}:${secs.toString().padStart(2, "0")}`
   }
 
+
   if (showCompletion) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-purple-50 flex items-center justify-center relative overflow-hidden">
@@ -512,11 +521,23 @@ export default function SentencePracticeApp({
     )
   }
 
+  // 加载状态
+  if (loadingRemote) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="text-gray-600">正在加载题目...</p>
+        </div>
+      </div>
+    )
+  }
+
   if (!currentQuestion) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-gray-600">课程未找到</p>
+        <div className="text-center space-y-4">
+          <p className="text-gray-600">课程未找到或暂无题目</p>
           {onBack && (
             <Button onClick={onBack} className="mt-4">
               返回
@@ -530,29 +551,32 @@ export default function SentencePracticeApp({
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white flex flex-col">
       <div className="bg-white border-b border-border shadow-sm">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-4">
-          <Button 
-            size="icon" 
-            variant="ghost" 
-            className="rounded-full hover:bg-muted"
-            onClick={onBack}
-          >
-            <X className="h-5 w-5 text-muted-foreground" />
-          </Button>
+        <div className="max-w-4xl mx-auto px-4 py-3 space-y-3">
+          {/* 顶部栏：返回按钮、进度条、生命值、计时器 */}
+          <div className="flex items-center gap-4">
+            <Button 
+              size="icon" 
+              variant="ghost" 
+              className="rounded-full hover:bg-muted"
+              onClick={onBack}
+            >
+              <X className="h-5 w-5 text-muted-foreground" />
+            </Button>
 
-          <div className="flex-1">
-            <Progress value={progress} className="h-3 bg-gray-200" />
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Heart key={i} className={`h-5 w-5 ${i < lives ? "fill-red-500 text-red-500" : "text-gray-300"}`} />
-              ))}
+            <div className="flex-1">
+              <Progress value={progress} className="h-3 bg-gray-200" />
             </div>
-            <div className="flex items-center gap-1.5 text-gray-600">
-              <Timer className="h-4 w-4" />
-              <span className="text-sm font-medium tabular-nums">{formatTimer(timer)}</span>
+
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Heart key={i} className={`h-5 w-5 ${i < lives ? "fill-red-500 text-red-500" : "text-gray-300"}`} />
+                ))}
+              </div>
+              <div className="flex items-center gap-1.5 text-gray-600">
+                <Timer className="h-4 w-4" />
+                <span className="text-sm font-medium tabular-nums">{formatTimer(timer)}</span>
+              </div>
             </div>
           </div>
         </div>

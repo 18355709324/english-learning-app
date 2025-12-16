@@ -44,6 +44,7 @@ type Sentence = {
   english: string
   words: string[] | null
   lesson_id: string | null
+  difficulty: string | null
 }
 
 type SentenceFormState = {
@@ -60,6 +61,31 @@ type AiGeneratedItem = {
   selected?: boolean
 }
 
+// 检查用户是否是管理员
+async function checkIsAdmin(): Promise<boolean> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+
+  if (!session?.user?.email) {
+    return false
+  }
+
+  // 方式1: 通过环境变量配置的管理员邮箱列表
+  const adminEmails = process.env.NEXT_PUBLIC_ADMIN_EMAILS?.split(",").map((e) => e.trim()) || []
+  if (adminEmails.length > 0 && adminEmails.includes(session.user.email)) {
+    return true
+  }
+
+  // 方式2: 通过 Supabase user_metadata 判断
+  const userMetadata = session.user.user_metadata
+  if (userMetadata?.is_admin === true || userMetadata?.role === "admin") {
+    return true
+  }
+
+  return false
+}
+
 export default function AdminCourseDetailPage() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
@@ -70,6 +96,7 @@ export default function AdminCourseDetailPage() {
   const [sentences, setSentences] = useState<Sentence[]>([])
 
   const [loading, setLoading] = useState(true)
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
   const [sentencesLoading, setSentencesLoading] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -90,8 +117,27 @@ export default function AdminCourseDetailPage() {
 
   const autoWords = useMemo(() => generateWordsFromEnglish(form.english), [form.english])
 
+  // 检查管理员权限
   useEffect(() => {
-    const load = async () => {
+    const checkAdminAndLoad = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+
+      if (!session) {
+        router.push("/login")
+        return
+      }
+
+      const admin = await checkIsAdmin()
+      setIsAdmin(admin)
+
+      if (!admin) {
+        setLoading(false)
+        return
+      }
+
+      // 是管理员，加载数据
       setLoading(true)
 
       const [{ data: courseData, error: courseError }, { data: lessonData, error: lessonError }] = await Promise.all([
@@ -115,9 +161,9 @@ export default function AdminCourseDetailPage() {
     }
 
     if (courseId) {
-      load()
+      checkAdminAndLoad()
     }
-  }, [courseId])
+  }, [courseId, router])
 
   useEffect(() => {
     const loadSentences = async () => {
@@ -389,10 +435,24 @@ export default function AdminCourseDetailPage() {
     }
   }
 
-  if (loading) {
+  // 权限检查中
+  if (isAdmin === null || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500">
-        载入中...
+        正在检查权限...
+      </div>
+    )
+  }
+
+  // 不是管理员
+  if (isAdmin === false) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-500 space-y-4">
+        <p className="text-lg font-semibold">无权限访问</p>
+        <p className="text-sm">您不是管理员，无法访问此页面。</p>
+        <Button variant="outline" onClick={() => router.push("/")}>
+          返回首页
+        </Button>
       </div>
     )
   }
@@ -448,22 +508,6 @@ export default function AdminCourseDetailPage() {
               </span>
             )}
 
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-slate-500">AI 难度：</span>
-              <Select
-                value={aiLevel}
-                onValueChange={(value) => setAiLevel(value as "简单" | "中等" | "稍难")}
-              >
-                <SelectTrigger size="sm" className="min-w-[120px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="简单">简单</SelectItem>
-                  <SelectItem value="中等">中等</SelectItem>
-                  <SelectItem value="稍难">稍难</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
           </div>
 
           <div className="flex items-center gap-3">
@@ -534,6 +578,7 @@ export default function AdminCourseDetailPage() {
                       <p className="text-xs text-slate-400">自动分词预览：{autoWords.join(" ")}</p>
                     )}
                   </div>
+
                 </div>
 
                 <DialogFooter className="mt-4">
@@ -552,7 +597,7 @@ export default function AdminCourseDetailPage() {
         </div>
 
         <div className="rounded-xl border bg-white/80 p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-4">
             <h2 className="text-base font-semibold text-slate-800">句子列表</h2>
             <span className="text-xs text-slate-500">共 {sentences.length} 条句子</span>
           </div>
@@ -561,7 +606,7 @@ export default function AdminCourseDetailPage() {
             <div className="py-10 text-center text-sm text-slate-500">正在加载句子...</div>
           ) : sentences.length === 0 ? (
             <div className="py-10 text-center text-sm text-slate-500">
-              还没有任何句子，点击右上角“添加句子”开始创建。
+              还没有任何句子，点击右上角「添加句子」开始创建。
             </div>
           ) : (
             <Table>

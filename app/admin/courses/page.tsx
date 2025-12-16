@@ -41,10 +41,36 @@ const ICON_OPTIONS = [
   "languages",
 ]
 
+// 检查用户是否是管理员
+async function checkIsAdmin(): Promise<boolean> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+
+  if (!session?.user?.email) {
+    return false
+  }
+
+  // 方式1: 通过环境变量配置的管理员邮箱列表
+  const adminEmails = process.env.NEXT_PUBLIC_ADMIN_EMAILS?.split(",").map((e) => e.trim()) || []
+  if (adminEmails.length > 0 && adminEmails.includes(session.user.email)) {
+    return true
+  }
+
+  // 方式2: 通过 Supabase user_metadata 判断
+  const userMetadata = session.user.user_metadata
+  if (userMetadata?.is_admin === true || userMetadata?.role === "admin") {
+    return true
+  }
+
+  return false
+}
+
 export default function AdminCoursesPage() {
   const router = useRouter()
   const [courses, setCourses] = useState<Course[]>([])
   const [loading, setLoading] = useState(true)
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingCourse, setEditingCourse] = useState<Course | null>(null)
   const [title, setTitle] = useState("")
@@ -53,8 +79,27 @@ export default function AdminCoursesPage() {
   const [saving, setSaving] = useState(false)
   const [seeding, setSeeding] = useState(false)
 
+  // 检查管理员权限
   useEffect(() => {
-    const loadCourses = async () => {
+    const checkAdmin = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+
+      if (!session) {
+        router.push("/login")
+        return
+      }
+
+      const admin = await checkIsAdmin()
+      setIsAdmin(admin)
+
+      if (!admin) {
+        // 不是管理员，显示提示或跳转
+        return
+      }
+
+      // 是管理员，加载课程数据
       try {
         const { data, error } = await supabase
           .from("courses")
@@ -71,8 +116,8 @@ export default function AdminCoursesPage() {
       }
     }
 
-    loadCourses()
-  }, [])
+    checkAdmin()
+  }, [router])
 
   const refreshCourses = async () => {
     const { data, error } = await supabase
@@ -170,6 +215,28 @@ export default function AdminCoursesPage() {
     } finally {
       setSeeding(false)
     }
+  }
+
+  // 权限检查中
+  if (isAdmin === null || loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500">
+        正在检查权限...
+      </div>
+    )
+  }
+
+  // 不是管理员
+  if (isAdmin === false) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-500 space-y-4">
+        <p className="text-lg font-semibold">无权限访问</p>
+        <p className="text-sm">您不是管理员，无法访问此页面。</p>
+        <Button variant="outline" onClick={() => router.push("/")}>
+          返回首页
+        </Button>
+      </div>
+    )
   }
 
   return (
