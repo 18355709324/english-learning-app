@@ -1,0 +1,3 @@
+{
+  "/api/generate-sentences/route": "app/api/generate-sentences/route.js"
+}

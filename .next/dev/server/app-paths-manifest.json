@@ -1,0 +1,10 @@
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/admin/courses/[id]/page": "app/admin/courses/[id]/page.js",
+  "/admin/courses/page": "app/admin/courses/page.js",
+  "/api/generate-sentences/route": "app/api/generate-sentences/route.js",
+  "/login/page": "app/login/page.js",
+  "/page": "app/page.js",
+  "/profile/page": "app/profile/page.js",
+  "/settings/page": "app/settings/page.js"
+}
