@@ -508,6 +508,23 @@ export default function AdminCourseDetailPage() {
               </span>
             )}
 
+            {/* AI 难度选择，仅影响生成的句子提示，不影响前台练习 UI */}
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-slate-500">AI 难度：</span>
+              <Select
+                value={aiLevel}
+                onValueChange={(value) => setAiLevel(value as "简单" | "中等" | "稍难")}
+              >
+                <SelectTrigger size="sm" className="min-w-[120px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="简单">简单</SelectItem>
+                  <SelectItem value="中等">中等</SelectItem>
+                  <SelectItem value="稍难">稍难</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <div className="flex items-center gap-3">
