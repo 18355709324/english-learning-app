@@ -8,8 +8,8 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.warn("Supabase env missing: NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY")
 }
 
-export const supabase = createClient(supabaseUrl || "", supabaseAnonKey || "")
+// 确保即使环境变量缺失也能创建客户端（使用空字符串）
+export const supabase = createClient(supabaseUrl || "https://placeholder.supabase.co", supabaseAnonKey || "placeholder-key")
 
 // 如果需要在不同会话创建实例，可使用此工厂函数
-export const createSupabaseClient = () => createClient(supabaseUrl || "", supabaseAnonKey || "")
-console.log("Supabase URL:", supabaseUrl)
+export const createSupabaseClient = () => createClient(supabaseUrl || "https://placeholder.supabase.co", supabaseAnonKey || "placeholder-key")

@@ -15,9 +15,15 @@ import {
   Trophy,
   TrendingUp,
   Settings,
+  Edit,
+  Plus,
+  Trash2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { UserNav } from "@/components/UserNav"
 import { courses, getAllCourses, type Course } from "@/lib/courses"
@@ -33,7 +39,9 @@ import {
   updateCourseProgress
 } from "@/lib/learning-progress"
 import { useProgress } from "@/hooks/use-progress"
+import { useIsAdmin } from "@/hooks/use-is-admin"
 import { supabase } from "@/lib/supabase"
+import { useRouter } from "next/navigation"
 
 export default function LearningDashboard({ 
   onStartLesson,
@@ -51,8 +59,31 @@ export default function LearningDashboard({
   const [overallAccuracy, setOverallAccuracy] = useState(0)
   const [weeklyStats, setWeeklyStats] = useState(getWeeklyStats())
   const { isCompleted } = useProgress()
+  const { isAdmin, loading: isAdminLoading } = useIsAdmin()
+  const router = useRouter()
   const [courseQuestionCounts, setCourseQuestionCounts] = useState<Record<string, number>>({})
-  const [supabaseCourses, setSupabaseCourses] = useState<Record<string, { title: string; description: string | null; icon_name: string | null }>>({})
+  const [supabaseCourses, setSupabaseCourses] = useState<Record<string, { title: string; description: string | null; icon_name: string | null; id: string }>>({})
+  
+  // 课程管理相关状态
+  const [courseEditDialogOpen, setCourseEditDialogOpen] = useState(false)
+  const [editingSupabaseCourse, setEditingSupabaseCourse] = useState<{ id: string; title: string; description: string | null; icon_name: string | null } | null>(null)
+  const [editCourseTitle, setEditCourseTitle] = useState("")
+  const [editCourseDescription, setEditCourseDescription] = useState("")
+  const [editCourseIconName, setEditCourseIconName] = useState("book-open")
+  const [savingCourse, setSavingCourse] = useState(false)
+  
+  const ICON_OPTIONS = [
+    "book-open",
+    "shopping-bag",
+    "utensils-crossed",
+    "plane",
+    "briefcase",
+    "languages",
+    "car",
+    "heart-pulse",
+    "clock",
+    "smile",
+  ]
 
   // 加载学习统计数据
   useEffect(() => {
@@ -75,7 +106,7 @@ export default function LearningDashboard({
     const loadCourseData = async () => {
       const allCourses = getAllCourses()
       const counts: Record<string, number> = {}
-      const coursesMap: Record<string, { title: string; description: string | null; icon_name: string | null }> = {}
+      const coursesMap: Record<string, { title: string; description: string | null; icon_name: string | null; id: string }> = {}
 
       for (const course of allCourses) {
         try {
@@ -87,11 +118,12 @@ export default function LearningDashboard({
             .maybeSingle()
 
           if (courseRow) {
-            // 保存 Supabase 中的课程信息（标题、描述、图标）
+            // 保存 Supabase 中的课程信息（标题、描述、图标、ID）
             coursesMap[course.id] = {
               title: courseRow.title,
               description: courseRow.description,
               icon_name: courseRow.icon_name,
+              id: courseRow.id,
             }
 
             // 统计该课程下的句子数量
@@ -124,6 +156,163 @@ export default function LearningDashboard({
     loadCourseData()
   }, [])
 
+  // 保存课程（新建或编辑）
+  const handleSaveCourse = async () => {
+    if (!editCourseTitle.trim()) {
+      alert("请输入课程标题")
+      return
+    }
+    setSavingCourse(true)
+    try {
+      let error
+      if (editingSupabaseCourse) {
+        // 编辑现有课程
+        const { error: updateError } = await supabase
+          .from("courses")
+          .update({
+            title: editCourseTitle.trim(),
+            description: editCourseDescription.trim() || null,
+            icon_name: editCourseIconName || null,
+          })
+          .eq("id", editingSupabaseCourse.id)
+        error = updateError
+      } else {
+        // 新建课程
+        const { error: insertError } = await supabase
+          .from("courses")
+          .insert({
+            title: editCourseTitle.trim(),
+            description: editCourseDescription.trim() || null,
+            icon_name: editCourseIconName || null,
+            total_lessons: 0,
+          })
+        error = insertError
+      }
+      
+      if (error) {
+        console.error("保存课程失败:", error)
+        alert("保存失败，请检查控制台日志")
+        return
+      }
+      
+      // 刷新课程数据
+      const allCourses = getAllCourses()
+      const counts: Record<string, number> = {}
+      const coursesMap: Record<string, { title: string; description: string | null; icon_name: string | null; id: string }> = {}
+
+      for (const course of allCourses) {
+        try {
+          const { data: courseRow } = await supabase
+            .from("courses")
+            .select("id, title, description, icon_name")
+            .eq("app_course_id", course.id)
+            .maybeSingle()
+
+          if (courseRow) {
+            coursesMap[course.id] = {
+              title: courseRow.title,
+              description: courseRow.description,
+              icon_name: courseRow.icon_name,
+              id: courseRow.id,
+            }
+
+            const { count } = await supabase
+              .from("sentences")
+              .select("*", { count: "exact", head: true })
+              .eq("course_id", courseRow.id)
+
+            if (count !== null && count > 0) {
+              counts[course.id] = count
+            } else {
+              counts[course.id] = course.questionCount
+            }
+          } else {
+            counts[course.id] = course.questionCount
+          }
+        } catch (err) {
+          console.error(`加载课程 ${course.id} 数据失败:`, err)
+          counts[course.id] = course.questionCount
+        }
+      }
+
+      setCourseQuestionCounts(counts)
+      setSupabaseCourses(coursesMap)
+      
+      setCourseEditDialogOpen(false)
+      setEditingSupabaseCourse(null)
+      setEditCourseTitle("")
+      setEditCourseDescription("")
+      setEditCourseIconName("book-open")
+    } catch (err) {
+      console.error("保存课程时出错:", err)
+      alert("保存失败")
+    } finally {
+      setSavingCourse(false)
+    }
+  }
+
+  // 删除课程
+  const handleDeleteCourse = async (courseId: string) => {
+    try {
+      const { error } = await supabase
+        .from("courses")
+        .delete()
+        .eq("id", courseId)
+      
+      if (error) {
+        console.error("删除课程失败:", error)
+        alert("删除失败，请检查控制台日志")
+        return
+      }
+      
+      // 刷新课程数据
+      const allCourses = getAllCourses()
+      const counts: Record<string, number> = {}
+      const coursesMap: Record<string, { title: string; description: string | null; icon_name: string | null; id: string }> = {}
+
+      for (const course of allCourses) {
+        try {
+          const { data: courseRow } = await supabase
+            .from("courses")
+            .select("id, title, description, icon_name")
+            .eq("app_course_id", course.id)
+            .maybeSingle()
+
+          if (courseRow) {
+            coursesMap[course.id] = {
+              title: courseRow.title,
+              description: courseRow.description,
+              icon_name: courseRow.icon_name,
+              id: courseRow.id,
+            }
+
+            const { count } = await supabase
+              .from("sentences")
+              .select("*", { count: "exact", head: true })
+              .eq("course_id", courseRow.id)
+
+            if (count !== null && count > 0) {
+              counts[course.id] = count
+            } else {
+              counts[course.id] = course.questionCount
+            }
+          } else {
+            counts[course.id] = course.questionCount
+          }
+        } catch (err) {
+          console.error(`加载课程 ${course.id} 数据失败:`, err)
+          counts[course.id] = course.questionCount
+        }
+      }
+
+      setCourseQuestionCounts(counts)
+      setSupabaseCourses(coursesMap)
+    } catch (err) {
+      console.error("删除课程时出错:", err)
+      alert("删除失败")
+    }
+  }
+
   const navItems = [
     { id: "home", icon: Home, label: "首页" },
     { id: "courses", icon: BookOpen, label: "我的课程" },
@@ -150,6 +339,7 @@ export default function LearningDashboard({
   }
 
   const renderManagerContent = () => {
+    // 如果不是管理员，显示本地课程管理器
     return <CourseManager />
   }
 
@@ -220,8 +410,34 @@ export default function LearningDashboard({
       <div>
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-2xl font-bold text-gray-900">所有课程</h3>
-          <div className="flex items-center gap-2 text-sm text-gray-600">
-            <span>共 {getAllCourses().length} 门课程</span>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <span>共 {getAllCourses().length} 门课程</span>
+              {/* 调试信息：显示管理员状态 */}
+              {process.env.NODE_ENV === 'development' && (
+                <span className="text-xs text-gray-400">
+                  (管理员: {isAdminLoading ? '检查中...' : isAdmin ? '是' : '否'})
+                </span>
+              )}
+            </div>
+            {/* 管理员编辑按钮 */}
+            {!isAdminLoading && isAdmin && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setEditingSupabaseCourse(null)
+                  setEditCourseTitle("")
+                  setEditCourseDescription("")
+                  setEditCourseIconName("book-open")
+                  setCourseEditDialogOpen(true)
+                }}
+                className="bg-teal-600 text-white border-teal-600 hover:bg-teal-700"
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                新建课程
+              </Button>
+            )}
           </div>
         </div>
 
@@ -250,37 +466,103 @@ export default function LearningDashboard({
             const completedInCloud = isCompleted(course.id)
             const isCourseCompleted = completedInCloud || courseProgress >= 100
             
+            const supabaseCourseId = supabaseCourses[course.id]?.id
+            
             return (
             <div
               key={course.id}
-              className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 transition-all hover:shadow-md cursor-pointer hover:border-teal-300"
-              onClick={() => {
-                onStartLesson(course.id)
-              }}
+              className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 transition-all hover:shadow-md hover:border-teal-300 relative group"
             >
               {/* Course Header */}
               <div className="flex items-start justify-between mb-4">
-                <div className={`w-14 h-14 rounded-xl bg-gradient-to-br ${course.color} flex items-center justify-center text-2xl`}>
+                <div 
+                  className={`w-14 h-14 rounded-xl bg-gradient-to-br ${course.color} flex items-center justify-center text-2xl cursor-pointer`}
+                  onClick={() => {
+                    onStartLesson(course.id)
+                  }}
+                >
                   {course.icon}
                 </div>
-                <span
-                  className={`text-xs font-semibold px-3 py-1 rounded-full ${
-                    isCourseCompleted
-                      ? "bg-green-100 text-green-700"
-                      : courseProgress > 0
-                        ? "bg-teal-100 text-teal-700"
-                        : "bg-gray-100 text-gray-600"
-                  }`}
-                >
-                  {!isCourseCompleted && courseProgress > 0 && "进行中"}
-                  {!isCourseCompleted && courseProgress === 0 && "未开始"}
-                  {isCourseCompleted && "已完成"}
-                </span>
+                <div className="flex items-center gap-2">
+                  {/* 管理员编辑按钮 - 始终可见 */}
+                  {!isAdminLoading && isAdmin && supabaseCourseId && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-xs bg-white border-teal-200 text-teal-600 hover:bg-teal-50"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const supabaseCourse = supabaseCourses[course.id]
+                          if (supabaseCourse) {
+                            setEditingSupabaseCourse({
+                              id: supabaseCourse.id,
+                              title: supabaseCourse.title,
+                              description: supabaseCourse.description,
+                              icon_name: supabaseCourse.icon_name,
+                            })
+                            setEditCourseTitle(supabaseCourse.title)
+                            setEditCourseDescription(supabaseCourse.description || "")
+                            setEditCourseIconName(supabaseCourse.icon_name || "book-open")
+                            setCourseEditDialogOpen(true)
+                          }
+                        }}
+                      >
+                        <Edit className="h-3 w-3 mr-1" />
+                        编辑
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-xs bg-white text-red-600 border-red-200 hover:bg-red-50"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (confirm("确定要删除这个课程吗？此操作不可恢复。")) {
+                            handleDeleteCourse(supabaseCourseId)
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-xs bg-white border-blue-200 text-blue-600 hover:bg-blue-50"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          router.push(`/admin/courses/${supabaseCourseId}`)
+                        }}
+                      >
+                        管理句子
+                      </Button>
+                    </>
+                  )}
+                  <span
+                    className={`text-xs font-semibold px-3 py-1 rounded-full ${
+                      isCourseCompleted
+                        ? "bg-green-100 text-green-700"
+                        : courseProgress > 0
+                          ? "bg-teal-100 text-teal-700"
+                          : "bg-gray-100 text-gray-600"
+                    }`}
+                  >
+                    {!isCourseCompleted && courseProgress > 0 && "进行中"}
+                    {!isCourseCompleted && courseProgress === 0 && "未开始"}
+                    {isCourseCompleted && "已完成"}
+                  </span>
+                </div>
               </div>
 
               {/* Course Info */}
-              <h4 className="text-lg font-semibold text-gray-900 mb-2">{course.title}</h4>
-              <p className="text-sm text-gray-600 mb-4">{course.description}</p>
+              <div 
+                className="cursor-pointer"
+                onClick={() => {
+                  onStartLesson(course.id)
+                }}
+              >
+                <h4 className="text-lg font-semibold text-gray-900 mb-2">{course.title}</h4>
+                <p className="text-sm text-gray-600 mb-4">{course.description}</p>
+              </div>
 
               {/* Progress */}
               {courseProgress > 0 && (
@@ -294,7 +576,12 @@ export default function LearningDashboard({
               )}
 
               {/* Meta Info */}
-              <div className="flex items-center justify-between text-sm text-gray-600">
+              <div 
+                className="flex items-center justify-between text-sm text-gray-600 cursor-pointer"
+                onClick={() => {
+                  onStartLesson(course.id)
+                }}
+              >
                 <div className="flex items-center gap-1">
                   <Clock className="h-4 w-4" />
                   <span>{course.duration}</span>
@@ -554,10 +841,19 @@ export default function LearningDashboard({
           {navItems.map((item) => {
             const Icon = item.icon
             const isActive = activeNav === item.id
+            const handleClick = () => {
+              // 如果是"词库管理"且用户是管理员，直接跳转到 Supabase 课程管理页面
+              if (item.id === "manager" && !isAdminLoading && isAdmin) {
+                router.push('/admin/courses')
+                return
+              }
+              // 否则正常切换导航
+              setActiveNav(item.id)
+            }
             return (
               <button
                 key={item.id}
-                onClick={() => setActiveNav(item.id)}
+                onClick={handleClick}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                   isActive ? "bg-teal-50 text-teal-600 font-medium" : "text-gray-700 hover:bg-gray-100"
                 }`}
@@ -611,6 +907,74 @@ export default function LearningDashboard({
         {/* Content Area - Now renders different content based on active navigation */}
         <main className="flex-1 overflow-y-auto p-8">{renderContent()}</main>
       </div>
+
+      {/* 课程编辑对话框 */}
+      <Dialog open={courseEditDialogOpen} onOpenChange={setCourseEditDialogOpen}>
+        <DialogContent className="max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>{editingSupabaseCourse ? "编辑课程" : "新建课程"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="space-y-2">
+              <Label htmlFor="edit-title">标题 *</Label>
+              <Input
+                id="edit-title"
+                value={editCourseTitle}
+                onChange={(e) => setEditCourseTitle(e.target.value)}
+                placeholder="如：购物场景"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-description">描述</Label>
+              <Input
+                id="edit-description"
+                value={editCourseDescription}
+                onChange={(e) => setEditCourseDescription(e.target.value)}
+                placeholder="简要说明这个课程的内容"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-icon">图标名称（Lucide 名称）</Label>
+              <Input
+                id="edit-icon"
+                list="icon-options-list"
+                value={editCourseIconName}
+                onChange={(e) => setEditCourseIconName(e.target.value)}
+                placeholder="如：shopping-bag"
+              />
+              <datalist id="icon-options-list">
+                {ICON_OPTIONS.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+              <p className="text-xs text-gray-500">
+                将在前端通过 icon_name 匹配 Lucide 图标。常用图标：book-open, shopping-bag, utensils-crossed, plane, briefcase 等
+              </p>
+            </div>
+            <div className="flex gap-3 pt-4 border-t">
+              <Button
+                onClick={handleSaveCourse}
+                disabled={savingCourse || !editCourseTitle.trim()}
+                className="flex-1 bg-teal-600 hover:bg-teal-700"
+              >
+                {savingCourse ? "保存中..." : "保存"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setCourseEditDialogOpen(false)
+                  setEditingSupabaseCourse(null)
+                  setEditCourseTitle("")
+                  setEditCourseDescription("")
+                  setEditCourseIconName("book-open")
+                }}
+              >
+                取消
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

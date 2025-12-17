@@ -54,8 +54,11 @@ export default function SentencePracticeApp({
   const [timer, setTimer] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isPlayingSlow, setIsPlayingSlow] = useState(false)
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false)
+  const [isLoadingSlowAudio, setIsLoadingSlowAudio] = useState(false)
   const [correctCount, setCorrectCount] = useState(0)
   const [showCompletion, setShowCompletion] = useState(false)
+  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null)
 
   const currentQuestion = questions[currentQuestionIndex]
   const progress = questions.length > 0 ? ((currentQuestionIndex + 1) / questions.length) * 100 : 0
@@ -269,6 +272,20 @@ export default function SentencePracticeApp({
   }
 
   const resetQuestionState = (index: number) => {
+    // 停止正在播放的音频
+    if (audioElement) {
+      audioElement.pause()
+      audioElement.currentTime = 0
+      setAudioElement(null)
+    }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
+    setIsPlaying(false)
+    setIsPlayingSlow(false)
+    setIsLoadingAudio(false)
+    setIsLoadingSlowAudio(false)
+    
     setSelectedWords([])
     if (questions[index] && questions[index].words) {
       setAvailableWords(shuffleArray([...questions[index].words]))
@@ -285,11 +302,19 @@ export default function SentencePracticeApp({
 
   const handleContinue = () => {
     // 停止正在播放的语音
-    if ("speechSynthesis" in window) {
+    if (audioElement) {
+      audioElement.pause()
+      audioElement.currentTime = 0
+      setAudioElement(null)
+    }
+    // 停止浏览器原生 TTS
+    if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel()
     }
     setIsPlaying(false)
     setIsPlayingSlow(false)
+    setIsLoadingAudio(false)
+    setIsLoadingSlowAudio(false)
 
     if (currentQuestionIndex < questions.length - 1) {
       const nextIndex = currentQuestionIndex + 1
@@ -312,11 +337,20 @@ export default function SentencePracticeApp({
   // 错误时重试当前题目：清空答案区和输入，重置状态但不切换题目
   const handleRetry = () => {
     if (!currentQuestion) return
-    if ("speechSynthesis" in window) {
+    // 停止正在播放的语音
+    if (audioElement) {
+      audioElement.pause()
+      audioElement.currentTime = 0
+      setAudioElement(null)
+    }
+    // 停止浏览器原生 TTS
+    if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel()
     }
     setIsPlaying(false)
     setIsPlayingSlow(false)
+    setIsLoadingAudio(false)
+    setIsLoadingSlowAudio(false)
     resetQuestionState(currentQuestionIndex)
   }
 
@@ -347,6 +381,20 @@ export default function SentencePracticeApp({
   }
 
   const handleRestart = () => {
+    // 停止正在播放的音频
+    if (audioElement) {
+      audioElement.pause()
+      audioElement.currentTime = 0
+      setAudioElement(null)
+    }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
+    setIsPlaying(false)
+    setIsPlayingSlow(false)
+    setIsLoadingAudio(false)
+    setIsLoadingSlowAudio(false)
+    
     setCurrentQuestionIndex(0)
     setSelectedWords([])
     if (questions[0] && questions[0].words) {
@@ -364,71 +412,247 @@ export default function SentencePracticeApp({
     setShowCompletion(false)
   }
 
-  const playAudio = () => {
-    if (isPlaying || isPlayingSlow) return // 如果正在播放，不重复播放
+  const playAudio = async () => {
+    if (isPlaying || isPlayingSlow || isLoadingAudio) return // 如果正在播放或加载中，不重复播放
 
+    setIsLoadingAudio(true)
     setIsPlaying(true)
     setShowAudioRipple(true)
 
-    // 使用 Web Speech API 朗读
-    if ("speechSynthesis" in window) {
-      const utterance = new SpeechSynthesisUtterance(currentQuestion.english)
-      utterance.lang = "en-US"
-      utterance.rate = 1.0
-      utterance.pitch = 1.0
-      utterance.volume = 1.0
+    try {
+      // 调用 Edge TTS API
+      const response = await fetch('/api/tts-edge', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: currentQuestion.english,
+          rate: 'normal',
+        }),
+      })
 
-      utterance.onend = () => {
-        setIsPlaying(false)
-        setShowAudioRipple(false)
+      // 检查响应类型
+      const contentType = response.headers.get('content-type')
+      
+      if (contentType && contentType.includes('application/json')) {
+        // API 返回 JSON，说明需要使用降级方案（浏览器原生 TTS）
+        const data = await response.json()
+        if (data.fallback === 'browser-native') {
+          // 使用浏览器原生 Web Speech API
+          if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel() // 取消之前的播放
+            
+            const utterance = new SpeechSynthesisUtterance(currentQuestion.english)
+            utterance.lang = 'en-US'
+            utterance.rate = 1.0
+            
+            utterance.onend = () => {
+              setIsPlaying(false)
+              setShowAudioRipple(false)
+              setIsLoadingAudio(false)
+            }
+            
+            utterance.onerror = () => {
+              setIsPlaying(false)
+              setShowAudioRipple(false)
+              setIsLoadingAudio(false)
+            }
+            
+            window.speechSynthesis.speak(utterance)
+            setIsLoadingAudio(false)
+            return
+          } else {
+            throw new Error('Browser does not support speech synthesis')
+          }
+        }
       }
 
-      utterance.onerror = () => {
-        setIsPlaying(false)
-        setShowAudioRipple(false)
+      if (!response.ok) {
+        throw new Error('Failed to generate audio')
       }
 
-      window.speechSynthesis.speak(utterance)
-    } else {
-      // 如果不支持 Web Speech API，使用视觉反馈
-      setTimeout(() => {
+      // 获取音频 blob
+      const audioBlob = await response.blob()
+      const audioUrl = URL.createObjectURL(audioBlob)
+
+      // 创建音频元素并播放
+      const audio = new Audio(audioUrl)
+      setAudioElement(audio)
+
+      audio.onended = () => {
         setIsPlaying(false)
         setShowAudioRipple(false)
-      }, 2000)
+        setIsLoadingAudio(false)
+        URL.revokeObjectURL(audioUrl) // 清理 URL
+      }
+
+      audio.onerror = () => {
+        setIsPlaying(false)
+        setShowAudioRipple(false)
+        setIsLoadingAudio(false)
+        URL.revokeObjectURL(audioUrl)
+      }
+
+      await audio.play()
+      setIsLoadingAudio(false)
+    } catch (error) {
+      console.error('Audio playback error:', error)
+      // 如果所有方法都失败，尝试使用浏览器原生 TTS
+      if ('speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.cancel()
+          const utterance = new SpeechSynthesisUtterance(currentQuestion.english)
+          utterance.lang = 'en-US'
+          utterance.rate = 1.0
+          
+          utterance.onend = () => {
+            setIsPlaying(false)
+            setShowAudioRipple(false)
+            setIsLoadingAudio(false)
+          }
+          
+          utterance.onerror = () => {
+            setIsPlaying(false)
+            setShowAudioRipple(false)
+            setIsLoadingAudio(false)
+          }
+          
+          window.speechSynthesis.speak(utterance)
+          setIsLoadingAudio(false)
+        } catch (fallbackError) {
+          console.error('Fallback TTS also failed:', fallbackError)
+          setIsPlaying(false)
+          setShowAudioRipple(false)
+          setIsLoadingAudio(false)
+        }
+      } else {
+        setIsPlaying(false)
+        setShowAudioRipple(false)
+        setIsLoadingAudio(false)
+      }
     }
   }
 
-  const playSlowAudio = () => {
-    if (isPlaying || isPlayingSlow) return // 如果正在播放，不重复播放
+  const playSlowAudio = async () => {
+    if (isPlaying || isPlayingSlow || isLoadingSlowAudio) return // 如果正在播放或加载中，不重复播放
 
+    setIsLoadingSlowAudio(true)
     setIsPlayingSlow(true)
     setShowSlowAudioRipple(true)
 
-    // 使用 Web Speech API 慢速朗读
-    if ("speechSynthesis" in window) {
-      const utterance = new SpeechSynthesisUtterance(currentQuestion.english)
-      utterance.lang = "en-US"
-      utterance.rate = 0.6 // 慢速
-      utterance.pitch = 1.0
-      utterance.volume = 1.0
+    try {
+      // 调用 Edge TTS API（慢速）
+      const response = await fetch('/api/tts-edge', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: currentQuestion.english,
+          rate: 'slow',
+        }),
+      })
 
-      utterance.onend = () => {
-        setIsPlayingSlow(false)
-        setShowSlowAudioRipple(false)
+      // 检查响应类型
+      const contentType = response.headers.get('content-type')
+      
+      if (contentType && contentType.includes('application/json')) {
+        // API 返回 JSON，说明需要使用降级方案（浏览器原生 TTS）
+        const data = await response.json()
+        if (data.fallback === 'browser-native') {
+          // 使用浏览器原生 Web Speech API（慢速）
+          if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel() // 取消之前的播放
+            
+            const utterance = new SpeechSynthesisUtterance(currentQuestion.english)
+            utterance.lang = 'en-US'
+            utterance.rate = 0.7 // 慢速
+            
+            utterance.onend = () => {
+              setIsPlayingSlow(false)
+              setShowSlowAudioRipple(false)
+              setIsLoadingSlowAudio(false)
+            }
+            
+            utterance.onerror = () => {
+              setIsPlayingSlow(false)
+              setShowSlowAudioRipple(false)
+              setIsLoadingSlowAudio(false)
+            }
+            
+            window.speechSynthesis.speak(utterance)
+            setIsLoadingSlowAudio(false)
+            return
+          } else {
+            throw new Error('Browser does not support speech synthesis')
+          }
+        }
       }
 
-      utterance.onerror = () => {
-        setIsPlayingSlow(false)
-        setShowSlowAudioRipple(false)
+      if (!response.ok) {
+        throw new Error('Failed to generate audio')
       }
 
-      window.speechSynthesis.speak(utterance)
-    } else {
-      // 如果不支持 Web Speech API，使用视觉反馈
-      setTimeout(() => {
+      // 获取音频 blob
+      const audioBlob = await response.blob()
+      const audioUrl = URL.createObjectURL(audioBlob)
+
+      // 创建音频元素并播放
+      const audio = new Audio(audioUrl)
+      setAudioElement(audio)
+
+      audio.onended = () => {
         setIsPlayingSlow(false)
         setShowSlowAudioRipple(false)
-      }, 3000)
+        setIsLoadingSlowAudio(false)
+        URL.revokeObjectURL(audioUrl) // 清理 URL
+      }
+
+      audio.onerror = () => {
+        setIsPlayingSlow(false)
+        setShowSlowAudioRipple(false)
+        setIsLoadingSlowAudio(false)
+        URL.revokeObjectURL(audioUrl)
+      }
+
+      await audio.play()
+      setIsLoadingSlowAudio(false)
+    } catch (error) {
+      console.error('Slow audio playback error:', error)
+      // 如果所有方法都失败，尝试使用浏览器原生 TTS
+      if ('speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.cancel()
+          const utterance = new SpeechSynthesisUtterance(currentQuestion.english)
+          utterance.lang = 'en-US'
+          utterance.rate = 0.7 // 慢速
+          
+          utterance.onend = () => {
+            setIsPlayingSlow(false)
+            setShowSlowAudioRipple(false)
+            setIsLoadingSlowAudio(false)
+          }
+          
+          utterance.onerror = () => {
+            setIsPlayingSlow(false)
+            setShowSlowAudioRipple(false)
+            setIsLoadingSlowAudio(false)
+          }
+          
+          window.speechSynthesis.speak(utterance)
+          setIsLoadingSlowAudio(false)
+        } catch (fallbackError) {
+          console.error('Fallback TTS also failed:', fallbackError)
+          setIsPlayingSlow(false)
+          setShowSlowAudioRipple(false)
+          setIsLoadingSlowAudio(false)
+        }
+      } else {
+        setIsPlayingSlow(false)
+        setShowSlowAudioRipple(false)
+        setIsLoadingSlowAudio(false)
+      }
     }
   }
 
@@ -775,12 +999,16 @@ export default function SentencePracticeApp({
                   onClick={playAudio}
                   size="icon"
                   variant="ghost"
-                  disabled={isPlaying || isPlayingSlow}
+                  disabled={isPlaying || isPlayingSlow || isLoadingAudio}
                   className={`rounded-full hover:bg-blue-50 relative z-10 transition-all ${
-                    isPlaying ? "bg-blue-100 animate-pulse" : ""
+                    isPlaying || isLoadingAudio ? "bg-blue-100 animate-pulse" : ""
                   }`}
                 >
-                  <Volume2 className={`h-5 w-5 ${isPlaying ? "text-blue-700" : "text-blue-600"}`} />
+                  {isLoadingAudio ? (
+                    <div className="h-5 w-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Volume2 className={`h-5 w-5 ${isPlaying ? "text-blue-700" : "text-blue-600"}`} />
+                  )}
                 </Button>
                 <AnimatePresence>
                   {showAudioRipple && (
@@ -809,12 +1037,16 @@ export default function SentencePracticeApp({
                   onClick={playSlowAudio}
                   size="icon"
                   variant="ghost"
-                  disabled={isPlaying || isPlayingSlow}
+                  disabled={isPlaying || isPlayingSlow || isLoadingSlowAudio}
                   className={`rounded-full hover:bg-purple-50 relative z-10 transition-all ${
-                    isPlayingSlow ? "bg-purple-100 animate-pulse" : ""
+                    isPlayingSlow || isLoadingSlowAudio ? "bg-purple-100 animate-pulse" : ""
                   }`}
                 >
-                  <Volume1 className={`h-5 w-5 ${isPlayingSlow ? "text-purple-700" : "text-purple-600"}`} />
+                  {isLoadingSlowAudio ? (
+                    <div className="h-5 w-5 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Volume1 className={`h-5 w-5 ${isPlayingSlow ? "text-purple-700" : "text-purple-600"}`} />
+                  )}
                 </Button>
                 <AnimatePresence>
                   {showSlowAudioRipple && (
